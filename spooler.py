@@ -1,0 +1,1 @@
+"""Main spooler class goes here"""
