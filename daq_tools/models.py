@@ -71,7 +71,7 @@ class DataPoint:
         return cls(**data)    
     
 
-    def to_line_protocol(self,ignore_errors=False,time_resolution=TimeRes.NS) -> str:
+    def to_line_protocol(self,ignore_errors=False,time_resolution=TimeRes.S) -> str:
         """Convert DataPoint to InfluxDB Line Protocol (ns precision default)."""
         try:
             if not self.fields:

@@ -1,0 +1,28 @@
+[inbound]
+watch_dir = "testData"
+
+[[sinks]]
+name = "testQuest"
+type = 'questdb'
+config.username = 'user'
+config.password = 'password'
+config.url = 'https://questdb.test/write'
+
+[[sinks]]
+name = "local_archive"
+type = "file"
+config.output_path = "/data/archive.jsonl"
+config.format = "json" 
+
+[[sinks]]
+name = "mqtt_daemon"
+type = "mqtt"
+
+config.broker = "localhost"
+config.port = 1883
+[config.measurement_map]
+    "temperature" = "daq/sensors/temp"
+    "pressure" = "daq/sensors/pressure"
+fallback_topic = "daq/unknown"
+format = "line_protocol"
+qos = 1
