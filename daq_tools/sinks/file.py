@@ -21,7 +21,7 @@ class FileSink(AsyncSink):
 
     Column order for CSV: timestamp + alpha-sorted tags + alpha-sorted fields.
     New tags/fields automatically add columns (dynamic growth).
-    rotation = "startup"      # "startup" (new file every launch), "daily", "hourly", "size", "none"
+    rotation = "startup"      # "startup" (new file every launch), "daily", "hourly", "size"
 
     """
 
@@ -32,15 +32,14 @@ class FileSink(AsyncSink):
 
         self.base_path = Path(sink_config.get("output_path", "output/data"))
         self.format: Literal["jsonl", "csv"] = sink_config.get("format", "jsonl")
-        self.rotation: Literal["none", "daily", "hourly", "size", "startup"] = sink_config.get("rotation", "startup")
+        self.rotation: Literal[ "daily", "hourly", "size", "startup"] = sink_config.get("rotation", "startup")
         self.max_size_mb: float = sink_config.get("max_size_mb", 50.0)
         self.compress: bool = sink_config.get("compress", False)
 
-        if not self.base_path:
-            raise ValueError(f"FileSink '{self.name}' requires 'output_path'")
 
         self.base_path.parent.mkdir(parents=True, exist_ok=True)
 
+        self._initial_file_created = False
         self._current_file: Path | None = None
         self._current_size = 0
         self._csv_writer = None
@@ -59,16 +58,22 @@ class FileSink(AsyncSink):
         parent = self.base_path.parent
         base_name = self.base_path.name
 
-        if force_new or self.rotation == "startup":
+        # Special case for 'startup' rotation: only create new file on very first open
+        if self.rotation == "startup" and not self._initial_file_created:
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+            suffix = f"_{timestamp}.jsonl" if self.format == "jsonl" else f"_{timestamp}.csv"
+            path = parent / (base_name + suffix)
+            self._initial_file_created = True
+            return path
+
+        # Force new file for size rotation or explicit force_new
+        if force_new:
             timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
             suffix = f"_{timestamp}.jsonl" if self.format == "jsonl" else f"_{timestamp}.csv"
             return parent / (base_name + suffix)
 
-        elif self.rotation == "none":
-            suffix = ".jsonl" if self.format == "jsonl" else ".csv"
-            return self.base_path.with_suffix(suffix)
 
-        elif self.rotation == "daily":
+        if self.rotation == "daily":
             date_str = datetime.now().strftime("%Y-%m-%d")
             suffix = f"_{date_str}.jsonl" if self.format == "jsonl" else f"_{date_str}.csv"
 
@@ -77,8 +82,9 @@ class FileSink(AsyncSink):
             suffix = f"_{date_str}.jsonl" if self.format == "jsonl" else f"_{date_str}.csv"
 
         else:
-            # fallback for size-only
-            suffix = f"_{int(time.time())}.jsonl" if self.format == "jsonl" else f"_{int(time.time())}.csv"
+            # fallback (size or unknown)
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+            suffix = f"_{timestamp}.jsonl" if self.format == "jsonl" else f"_{timestamp}.csv"
 
         return parent / (base_name + suffix)
 
@@ -87,8 +93,8 @@ class FileSink(AsyncSink):
         target_path = self._get_current_file_path(force_new=force_new)
 
         # Rotate if target file changed OR size limit exceeded
-        if (self._current_file != target_path or 
-            (self._current_file and self._current_size > self.max_size_mb * 1024 * 1024)):
+        if (self._current_file != target_path) or \
+            (self._current_file and self._current_size > self.max_size_mb * 1024 * 1024):
             
             await self._close_current_file()
             
