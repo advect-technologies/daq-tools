@@ -1,18 +1,20 @@
 [inbound]
 watch_dir = "testData"
 
-[[sinks]]
-name = "testQuest"
-type = 'questdb'
-config.username = 'user'
-config.password = 'password'
-config.url = 'https://questdb.test/write'
 
 [[sinks]]
-name = "local_archive"
+name = "local_json_archive"
 type = "file"
-config.output_path = "/data/archive.jsonl"
-config.format = "json" 
+config.output_path = "/data/archive/json-data/daq"
+config.format = "jsonl" 
+config.rotation = 'daily'
+
+[[sinks]]
+name = "local_csv_archive"
+type = "file"
+config.output_path = "/data/archive/csv-data/daq"
+config.format = "csv" 
+config.rotation = 'daily'
 
 [[sinks]]
 name = "mqtt_daemon"

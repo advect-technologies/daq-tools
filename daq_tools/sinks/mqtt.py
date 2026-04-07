@@ -1,5 +1,6 @@
-import asyncio
+import random
 import logging
+import string
 from pathlib import Path
 from typing import Any
 
@@ -44,7 +45,10 @@ class MqttSink(AsyncSink):
         self.password = self.config.get("password")
         self.client_id = self.config.get("client_id", f"daq-ingestor-{self.name}")
         self.qos = self.config.get("qos", 1)
-        
+
+        random_suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
+        self.client_id = self.config.get("client_id", f"daq-ingestor-{self.name}-{random_suffix}")       
+
         tls = self.config.get('tls',False)
         self.tls_params = aiomqtt.TLSParameters() if tls else None
 
