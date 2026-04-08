@@ -1,6 +1,6 @@
 [project]
 name = "daq-tools"
-version = "0.2.1"
+version = "0.2.2"
 description = "Async JSONL file ingestor with fan-out to configurable data sinks (MQTT, file, etc.)"
 readme = "README.md"
 requires-python = ">=3.13"

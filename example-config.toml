@@ -5,16 +5,17 @@ watch_dir = "testData"
 [[sinks]]
 name = "local_json_archive"
 type = "file"
-config.output_path = "/data/archive/json-data/daq"
+config.output_path = "/data/archive/json-data"
 config.format = "jsonl" 
 config.rotation = 'daily'
 
 [[sinks]]
 name = "local_csv_archive"
 type = "file"
-config.output_path = "/data/archive/csv-data/daq"
+config.output_path = "/data/archive/csv-data"
 config.format = "csv" 
-config.rotation = 'daily'
+config.startup = true
+config.max_size_mb = 10
 
 [[sinks]]
 name = "mqtt_daemon"
