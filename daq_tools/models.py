@@ -5,36 +5,17 @@ from typing import Any
 from enum import StrEnum
 from socket import gethostname
 
+from .utils import (
+    escape_lp_identifier,
+    escape_lp_field_value,
+    get_device_public_ip_tag,
+)
+
 class TimeRes(StrEnum):
     NS = 'ns'
     MUS = 'mus'
     MS = 'ms'
     S = 's'
-
-def escape_lp_identifier(s: str) -> str:
-    """Escape measurement, tag key/value, field key for Line Protocol."""
-    if not isinstance(s, str):
-        s = str(s)
-    return (
-        s.replace("\\", "\\\\")
-         .replace(",", "\\,")
-         .replace("=", "\\=")
-         .replace(" ", "\\ ")
-    )
-
-def escape_lp_field_value(v: Any) -> str:
-    """Format and escape a field value for Line Protocol."""
-    if isinstance(v, str):
-        escaped = v.replace("\\", "\\\\").replace('"', '\\"')
-        return f'"{escaped}"'
-    elif isinstance(v, bool):
-        return "t" if v else "f"
-    elif isinstance(v, int):
-        return f"{v}i"          # integer type tag
-    elif isinstance(v, float):
-        return f"{v:g}"         # avoid scientific notation noise
-    else:
-        raise ValueError(f"Unsupported field value type: {type(v).__name__}")
 
 @dataclass(kw_only=True)
 class DataPoint:
@@ -57,6 +38,10 @@ class DataPoint:
         if 'id' not in self.tags:
             self.tags.update({'id':gethostname()})
 
+        # Auto-add public IP tag (if enabled via config)
+        ip, tag_key = get_device_public_ip_tag()
+        if ip and tag_key not in self.tags:
+            self.tags[tag_key] = ip
 
     def to_json(self) -> str:  
         return json.dumps(asdict(self))

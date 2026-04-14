@@ -2,6 +2,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from .utils import get_public_ip, configure_device_tracking
 
 @dataclass
 class InboundConfig:
@@ -22,12 +23,17 @@ class SinkConfig:
     type: str
     config: dict[str, Any] = field(default_factory=dict)
 
+@dataclass
+class DeviceConfig:
+    add_public_ip: bool = False
+    public_ip_tag_key: str = "public_ip"
 
 @dataclass
 class DAQConfig:
     inbound: InboundConfig
     processing: ProcessingConfig = field(default_factory=ProcessingConfig)
     sinks: list[SinkConfig] = field(default_factory=list)
+    device: DeviceConfig = field(default_factory=DeviceConfig)
 
 
 def load_config(config_path: str | Path) -> DAQConfig:
@@ -51,10 +57,29 @@ def load_config(config_path: str | Path) -> DAQConfig:
             config=s.get("config", {})
         ))
 
+    # === NEW DEVICE SECTION ===
+    device_raw = raw.get("device", {})
+    device = DeviceConfig(
+        add_public_ip=device_raw.get("add_public_ip", False),
+        public_ip_tag_key=device_raw.get("public_ip_tag_key", "public_ip"),
+    )
+
+    # Fetch public IP once at startup if enabled
+    if device.add_public_ip:
+        ip = get_public_ip()
+        configure_device_tracking(
+            add_public_ip=True,
+            tag_key=device.public_ip_tag_key,
+            ip=ip,
+        )
+    else:
+        configure_device_tracking(add_public_ip=False)
+
     return DAQConfig(
         inbound=inbound,
         processing=processing,
-        sinks=sinks
+        sinks=sinks,
+        device=device,
     )
 
 
