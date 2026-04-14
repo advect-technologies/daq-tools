@@ -203,7 +203,7 @@ class FileSink(AsyncSink):
 
         try:
             async with aiofiles.open(self._current_file, "a", encoding="utf-8") as dst:
-                await dst.writelines((line + "\n" for line in self._jsonl_buffer))
+                await dst.writelines((DataPoint.from_json(line).to_json() + "\n" for line in self._jsonl_buffer))
             self._jsonl_buffer.clear()
 
         except Exception as e:

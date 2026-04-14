@@ -1,6 +1,9 @@
 [inbound]
 watch_dir = "testData"
 
+[device]
+add_public_ip = false
+public_ip_tag_key = "public_ip"
 
 [[sinks]]
 name = "local_json_archive"
