@@ -43,7 +43,6 @@ class MqttSink(AsyncSink):
         self.port = self.config.get("port", 1883)
         self.username = self.config.get("username")
         self.password = self.config.get("password")
-        self.client_id = self.config.get("client_id", f"daq-ingestor-{self.name}")
         self.qos = self.config.get("qos", 1)
 
         random_suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
@@ -59,10 +58,26 @@ class MqttSink(AsyncSink):
 
         self._client: aiomqtt.Client | None = None
 
+    async def _ensure_connected(self) -> None:
+        """Create client only if we don't have one (or it was cleared after failure)."""
+        if self._client is not None:
+            return  # Reuse existing healthy client
+
+        logger.info(f"MqttSink '{self.name}' connecting to {self.broker}:{self.port}")
+
+        self._client = aiomqtt.Client(
+            hostname=self.broker,
+            port=self.port,
+            username=self.username,
+            password=self.password,
+            identifier=self.client_id,
+            tls_params=self.tls_params,
+        )
+        await self._client.__aenter__()
+
     async def process_file(self, file_path: Path) -> None:
         """Read jsonl file and publish each DataPoint to MQTT."""
-        if self._client is None:
-            await self._connect()
+        await self._ensure_connected()
 
         try:
             async with aiofiles.open(file_path, "r", encoding="utf-8") as f:
@@ -80,26 +95,33 @@ class MqttSink(AsyncSink):
                     topic = self._get_topic_for(dp.measurement)
                     payload = self._format_payload(dp)
 
-                    try:
-                        await self._client.publish(
-                            topic=topic,
-                            payload=payload,
-                            qos=self.qos,
-                            retain=False
-                        )
-                    except Exception as pub_err:
-                        logger.warning(f"MQTT publish failed for {topic}: {pub_err}")
-                        raise TryAgainError(f"Publish failed: {pub_err}") from pub_err
+                    # Publish — let any error bubble up to outer handler
+                    await self._client.publish(
+                        topic=topic,
+                        payload=payload,
+                        qos=self.qos,
+                        retain=False
+                    )
 
-            logger.debug(f"MqttSink '{self.name}' published {file_path.name}")
+            logger.debug(f"MqttSink '{self.name}' successfully published {file_path.name}")
 
         except aiomqtt.MqttError as e:
-            # Connection / network issues → transient
-            logger.warning(f"MqttSink '{self.name}' MQTT error: {e}")
-            self._client = None  # force reconnect on next file
-            raise TryAgainError(str(e)) from e
+            # Connection lost, network issue, broker unreachable, etc.
+            logger.warning(f"MqttSink '{self.name}' MQTT error on {file_path.name}: {e}")
+
+            # Critical: Force recreation of client on next retry
+            if self._client is not None:
+                try:
+                    await self._client.__aexit__(None, None, None)
+                except Exception:
+                    pass  # best effort cleanup
+                self._client = None
+
+            raise TryAgainError(f"MQTT error: {e}") from e
+
         except Exception as e:
-            logger.warning(f"MqttSink '{self.name}' transient error: {e}")
+            # Unexpected non-MQTT errors (should be rare)
+            logger.warning(f"MqttSink '{self.name}' unexpected error on {file_path.name}: {e}")
             raise TryAgainError(str(e)) from e
 
     def _get_topic_for(self, measurement: str) -> str:
