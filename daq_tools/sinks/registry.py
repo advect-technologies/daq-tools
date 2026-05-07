@@ -6,6 +6,8 @@ from ..config import SinkConfig, DAQConfig
 from .base import AsyncSink
 from .file import FileSink
 from .mqtt import MqttSink
+from .http import HttpPostSink
+from .sqlite import SQLiteSink
 
 logger = logging.getLogger(__name__)
 
@@ -13,12 +15,9 @@ logger = logging.getLogger(__name__)
 _SINK_REGISTRY: dict[str, Type[AsyncSink]] = {
     "file": FileSink,
     "mqtt": MqttSink,
-    # Add more here later:
-    # "http": HttpPostSink,
-    # "sqlite": SqliteSink,
-    # "questdb": QuestDBSink,
+    "http": HttpPostSink,
+    "sqlite": SQLiteSink,
 }
-
 
 def register_sink_type(sink_type: str, sink_class: Type[AsyncSink]) -> None:
     """Register a new sink type dynamically (useful for plugins/extensions)."""

@@ -3,14 +3,12 @@ import logging
 import random
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any
 
 import aiofiles
 import watchfiles
 from watchfiles import Change
 
 from ..config import SinkConfig
-from ..models import DataPoint
 
 logger = logging.getLogger(__name__)
 

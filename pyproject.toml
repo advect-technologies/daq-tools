@@ -9,7 +9,10 @@ authors = [
 ]
 dependencies = [
     "aiofiles>=25.1.0",
+    "aiohttp>=3.13.5",
     "aiomqtt>=2.5.1",
+    "aiosqlite>=0.22.1",
+    "rich>=15.0.0",
     "watchfiles>=1.1.1",
 ]
 
