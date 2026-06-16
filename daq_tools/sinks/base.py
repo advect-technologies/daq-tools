@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 class TryAgainError(Exception):
     """Raise this from process_file() for transient errors that should be retried."""
+
     pass
 
 
@@ -47,7 +48,9 @@ class AsyncSink(ABC):
 
         self.max_retries = config.config.get("max_retries", 5)
         self.backoff_base = config.config.get("backoff_base_seconds", 2.0)
-        self.retry_scan_interval = config.config.get("retry_scan_interval", 60.0)  # seconds
+        self.retry_scan_interval = config.config.get(
+            "retry_scan_interval", 60.0
+        )  # seconds
         self.retry_batch_limit = config.config.get("retry_batch_size", 10)
 
         self._watcher_task: asyncio.Task | None = None
@@ -62,7 +65,9 @@ class AsyncSink(ABC):
         self._watcher_task = asyncio.create_task(self._watcher_loop())
         self._retry_task = asyncio.create_task(self._retry_scanner_loop())
 
-        logger.info(f"Sink '{self.name}' ({self.sink_type}) started. Inbox: {self.inbox_dir}")
+        logger.info(
+            f"Sink '{self.name}' ({self.sink_type}) started. Inbox: {self.inbox_dir}"
+        )
 
     async def stop(self) -> None:
         """Graceful shutdown."""
@@ -79,8 +84,13 @@ class AsyncSink(ABC):
         logger.info(f"Sink '{self.name}' stopped.")
 
     def _ensure_dirs(self) -> None:
-        for d in (self.inbox_dir, self.retry_dir, self.processed_dir,
-                  self.dead_letter_dir, self.line_jail_dir):
+        for d in (
+            self.inbox_dir,
+            self.retry_dir,
+            self.processed_dir,
+            self.dead_letter_dir,
+            self.line_jail_dir,
+        ):
             d.mkdir(parents=True, exist_ok=True)
 
     async def _watcher_loop(self) -> None:
@@ -100,6 +110,8 @@ class AsyncSink(ABC):
 
                 file_path = Path(path_str)
                 if not file_path.name.endswith(".jsonl"):
+                    continue
+                if not file_path.exists():
                     continue
 
                 await self._process_file_with_retry(file_path, is_retry=False)
@@ -130,7 +142,9 @@ class AsyncSink(ABC):
             except Exception as e:
                 logger.warning(f"Error in retry scanner for sink '{self.name}': {e}")
 
-    async def _process_file_with_retry(self, file_path: Path, is_retry: bool = False) -> None:
+    async def _process_file_with_retry(
+        self, file_path: Path, is_retry: bool = False
+    ) -> None:
         """Process a file with retry logic using TryAgainError."""
         attempts = 0
         current_file = file_path
@@ -146,7 +160,9 @@ class AsyncSink(ABC):
                 except Exception:
                     pass
 
-                logger.info(f"Sink '{self.name}' successfully processed {current_file.name}")
+                logger.info(
+                    f"Sink '{self.name}' successfully processed {current_file.name}"
+                )
                 return
 
             except TryAgainError as e:
@@ -165,7 +181,9 @@ class AsyncSink(ABC):
                             current_file.replace(retry_path)
                             current_file = retry_path
                         except Exception as move_err:
-                            logger.error(f"Failed to move {current_file} to retry/: {move_err}")
+                            logger.error(
+                                f"Failed to move {current_file} to retry/: {move_err}"
+                            )
                 else:
                     logger.warning(
                         f"Sink '{self.name}' exhausted retries for {current_file.name} "
@@ -194,7 +212,9 @@ class AsyncSink(ABC):
         """
         ...
 
-    async def _write_line_to_jail(self, original_line: str, error: Exception, original_file: Path) -> None:
+    async def _write_line_to_jail(
+        self, original_line: str, error: Exception, original_file: Path
+    ) -> None:
         """Write bad line to line_jail with context."""
         timestamp = asyncio.get_running_loop().time()
         jail_file = self.line_jail_dir / f"{timestamp:.0f}_{original_file.name}.bad"
