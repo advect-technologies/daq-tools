@@ -8,8 +8,8 @@ import watchfiles
 from watchfiles import Change
 
 from .config import DAQConfig, load_config
-from .sinks.registry import create_all_sinks
 from .sinks.base import AsyncSink
+from .sinks.registry import create_all_sinks
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +73,9 @@ class DAQIngestor:
         self._watcher_task = asyncio.create_task(self._watcher_loop())
         self._distributor_task = asyncio.create_task(self._distributor_loop())
 
-        logger.info(f"DAQIngestor started. Watching {self.watch_dir} → queue → {len(self.sinks)} sinks")
+        logger.info(
+            f"DAQIngestor started. Watching {self.watch_dir} → queue → {len(self.sinks)} sinks"
+        )
 
     async def stop(self) -> None:
         """Graceful shutdown: stop watcher/distributor, then sinks."""
@@ -118,6 +120,8 @@ class DAQIngestor:
 
                 file_path = Path(path_str)
                 if not file_path.name.endswith(".jsonl"):
+                    continue
+                if not file_path.exists():
                     continue
 
                 # Move new file to central queue (atomic on same filesystem)
@@ -164,7 +168,9 @@ class DAQIngestor:
                 logger.debug(f"Distributed {file_path.name} → {sink.name}/inbox")
 
             except Exception as e:
-                logger.error(f"Failed to distribute {file_path.name} to sink '{sink.name}': {e}")
+                logger.error(
+                    f"Failed to distribute {file_path.name} to sink '{sink.name}': {e}"
+                )
                 success = False
                 break  # stop on first failure for this file
 
@@ -172,11 +178,15 @@ class DAQIngestor:
         if success and copied_to == len(self.sinks):
             try:
                 file_path.unlink()
-                logger.info(f"Successfully distributed and removed from queue: {file_path.name}")
+                logger.info(
+                    f"Successfully distributed and removed from queue: {file_path.name}"
+                )
             except Exception as e:
                 logger.warning(f"Failed to delete {file_path.name} from queue: {e}")
         elif copied_to > 0:
-            logger.warning(f"Partial distribution for {file_path.name} ({copied_to}/{len(self.sinks)} sinks)")
+            logger.warning(
+                f"Partial distribution for {file_path.name} ({copied_to}/{len(self.sinks)} sinks)"
+            )
 
     # Optional helper methods
     def get_sink(self, name: str) -> AsyncSink | None:
