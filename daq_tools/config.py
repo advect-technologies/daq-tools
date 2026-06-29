@@ -2,13 +2,16 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from .utils import get_public_ip, configure_device_tracking
+
+from .utils import configure_device_tracking, get_public_ip
+
 
 @dataclass
 class InboundConfig:
     watch_dir: str | Path
     data_dir: str | Path = "data"  # base directory for queue + sinks
     file_pattern: str = "*.jsonl"
+    stale_scan_interval: int = 600
 
 
 @dataclass
@@ -23,10 +26,12 @@ class SinkConfig:
     type: str
     config: dict[str, Any] = field(default_factory=dict)
 
+
 @dataclass
 class DeviceConfig:
     add_public_ip: bool = False
     public_ip_tag_key: str = "public_ip"
+
 
 @dataclass
 class DAQConfig:
@@ -51,11 +56,9 @@ def load_config(config_path: str | Path) -> DAQConfig:
 
     sinks = []
     for s in raw.get("sinks", []):
-        sinks.append(SinkConfig(
-            name=s["name"],
-            type=s["type"],
-            config=s.get("config", {})
-        ))
+        sinks.append(
+            SinkConfig(name=s["name"], type=s["type"], config=s.get("config", {}))
+        )
 
     # === NEW DEVICE SECTION ===
     device_raw = raw.get("device", {})
@@ -88,7 +91,9 @@ def create_example_config() -> DAQConfig:
     return DAQConfig(
         inbound=InboundConfig(watch_dir="/tmp/incoming"),
         sinks=[
-            SinkConfig(name="local_file", type="file", config={"path": "/tmp/output.jsonl"}),
+            SinkConfig(
+                name="local_file", type="file", config={"path": "/tmp/output.jsonl"}
+            ),
             # more sinks later
-        ]
+        ],
     )

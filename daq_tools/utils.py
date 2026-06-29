@@ -1,6 +1,7 @@
-import urllib.request
 import json
-from typing import Optional, Any
+import urllib.request
+from math import isnan
+from typing import Any, Optional
 
 # Module-level cache for device public IP tracking
 _DEVICE_PUBLIC_IP: Optional[str] = None
@@ -22,9 +23,9 @@ def get_public_ip() -> Optional[str]:
                     data = json.load(response)
                     ip = data.get("ip") or data.get("origin")
                     if ip:
-                        return ip.split(',')[0].strip()
+                        return ip.split(",")[0].strip()
                 else:
-                    ip = response.read().decode('utf-8').strip()
+                    ip = response.read().decode("utf-8").strip()
                     if ip:
                         return ip
         except Exception:
@@ -60,9 +61,9 @@ def escape_lp_identifier(s: str) -> str:
         s = str(s)
     return (
         s.replace("\\", "\\\\")
-         .replace(",", "\\,")
-         .replace("=", "\\=")
-         .replace(" ", "\\ ")
+        .replace(",", "\\,")
+        .replace("=", "\\=")
+        .replace(" ", "\\ ")
     )
 
 
@@ -79,3 +80,16 @@ def escape_lp_field_value(v: Any) -> str:
         return f"{v:g}"
     else:
         raise ValueError(f"Unsupported field value type: {type(v).__name__}")
+
+
+def check_for_empty_value(v: Any) -> bool:
+    """Return True if the value is empty (None, NaN, or empty string)."""
+    if v is None:
+        return True
+    elif isinstance(v, float):
+        if isnan(v):
+            return True
+    elif isinstance(v, str):
+        if not v.strip():
+            return True
+    return False

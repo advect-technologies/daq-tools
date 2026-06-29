@@ -2,7 +2,6 @@ import asyncio
 import logging
 import shutil
 from pathlib import Path
-from typing import Any
 
 import watchfiles
 from watchfiles import Change
@@ -39,6 +38,8 @@ class DAQIngestor:
 
         self.file_pattern = config.inbound.file_pattern
 
+        self._inbox_lock = asyncio.Lock()
+
         # Will be populated during startup
         self.sinks: list[AsyncSink] = []
         self._watcher_task: asyncio.Task | None = None
@@ -72,6 +73,7 @@ class DAQIngestor:
         # Start watcher and distributor
         self._watcher_task = asyncio.create_task(self._watcher_loop())
         self._distributor_task = asyncio.create_task(self._distributor_loop())
+        self._stale_task = asyncio.create_task(self._stale_loop())
 
         logger.info(
             f"DAQIngestor started. Watching {self.watch_dir} → queue → {len(self.sinks)} sinks"
@@ -82,7 +84,7 @@ class DAQIngestor:
         self._running = False
 
         # Cancel orchestrator tasks
-        for task in (self._watcher_task, self._distributor_task):
+        for task in (self._watcher_task, self._distributor_task, self._stale_task):
             if task:
                 task.cancel()
                 try:
@@ -103,6 +105,37 @@ class DAQIngestor:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.stop()
 
+    async def _enqueue_file(self, file_path: Path) -> None:
+        """Move file to the queue directory."""
+        async with self._inbox_lock:
+            if not file_path.name.endswith(".jsonl"):
+                return
+            if not file_path.exists():
+                return
+
+            # Move new file to central queue (atomic on same filesystem)
+            try:
+                queue_path = self.queue_dir / file_path.name
+                file_path.replace(queue_path)  # atomic move
+                logger.info(f"New file queued: {file_path.name}")
+            except Exception as e:
+                logger.error(f"Failed to move {file_path} to queue: {e}")
+                file_path.unlink(missing_ok=True)
+
+    async def _stale_loop(self) -> None:
+        """Periodically scan inbox for stale files."""
+        while self._running:
+            try:
+                await self._scan_inbox()
+            except Exception as e:
+                logger.debug(f"Error in stale loop: {e}")
+            await asyncio.sleep(self.config.inbound.stale_scan_interval)
+
+    async def _scan_inbox(self) -> None:
+        """Scan inbox directory for stale files (files not in queue or sinks)."""
+        for file_path in self.watch_dir.rglob("*.jsonl"):
+            await self._enqueue_file(file_path)
+
     async def _watcher_loop(self) -> None:
         """Watch inbound directory for new *.jsonl files (creation only)."""
         async for changes in watchfiles.awatch(
@@ -119,18 +152,7 @@ class DAQIngestor:
                     continue
 
                 file_path = Path(path_str)
-                if not file_path.name.endswith(".jsonl"):
-                    continue
-                if not file_path.exists():
-                    continue
-
-                # Move new file to central queue (atomic on same filesystem)
-                try:
-                    queue_path = self.queue_dir / file_path.name
-                    file_path.replace(queue_path)  # atomic move
-                    logger.info(f"New file detected and queued: {file_path.name}")
-                except Exception as e:
-                    logger.error(f"Failed to move {file_path} to queue: {e}")
+                await self._enqueue_file(file_path)
 
     async def _distributor_loop(self) -> None:
         """Periodically scan queue/ and fan-out copies to all sink inboxes."""

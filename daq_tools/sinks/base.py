@@ -52,10 +52,16 @@ class AsyncSink(ABC):
             "retry_scan_interval", 60.0
         )  # seconds
         self.retry_batch_limit = config.config.get("retry_batch_size", 10)
+        self.inbound_stale_scan_interval = config.config.get(
+            "inbound_stale_scan_interval", 600.0
+        )  # seconds
 
         self._watcher_task: asyncio.Task | None = None
         self._retry_task: asyncio.Task | None = None
+        self._stale_task: asyncio.Task | None = None
         self._running = False
+
+        self._inbox_lock = asyncio.Lock()
 
     async def start(self) -> None:
         """Start watcher and retry scanner."""
@@ -64,6 +70,7 @@ class AsyncSink(ABC):
 
         self._watcher_task = asyncio.create_task(self._watcher_loop())
         self._retry_task = asyncio.create_task(self._retry_scanner_loop())
+        self._stale_task = asyncio.create_task(self._stale_loop())
 
         logger.info(
             f"Sink '{self.name}' ({self.sink_type}) started. Inbox: {self.inbox_dir}"
@@ -73,7 +80,9 @@ class AsyncSink(ABC):
         """Graceful shutdown."""
         self._running = False
 
-        tasks = [t for t in (self._watcher_task, self._retry_task) if t]
+        tasks = [
+            t for t in (self._watcher_task, self._retry_task, self._stale_task) if t
+        ]
         for task in tasks:
             task.cancel()
             try:
@@ -93,6 +102,26 @@ class AsyncSink(ABC):
         ):
             d.mkdir(parents=True, exist_ok=True)
 
+    async def _stale_loop(self) -> None:
+        """Periodically scan inbox for stale files."""
+        while self._running:
+            try:
+                await self._scan_inbox()
+            except Exception as e:
+                logger.debug(f"Error in stale loop for sink '{self.name}': {e}")
+            await asyncio.sleep(self.inbound_stale_scan_interval)
+
+    async def _scan_inbox(self) -> None:
+        """Scan inbox directory for stale files (files not in queue or sinks)."""
+        async with self._inbox_lock:
+            for file_path in self.inbox_dir.rglob("*.jsonl"):
+                if not file_path.name.endswith(".jsonl"):
+                    continue
+                if not file_path.exists():
+                    continue
+
+                await self._process_file_with_retry(file_path, is_retry=False)
+
     async def _watcher_loop(self) -> None:
         """Watch inbox/ for newly arrived files (creation events)."""
         async for changes in watchfiles.awatch(
@@ -103,18 +132,18 @@ class AsyncSink(ABC):
         ):
             if not self._running:
                 break
+            async with self._inbox_lock:
+                for change, path_str in changes:
+                    if change != Change.added:
+                        continue
 
-            for change, path_str in changes:
-                if change != Change.added:
-                    continue
+                    file_path = Path(path_str)
+                    if not file_path.name.endswith(".jsonl"):
+                        continue
+                    if not file_path.exists():
+                        continue
 
-                file_path = Path(path_str)
-                if not file_path.name.endswith(".jsonl"):
-                    continue
-                if not file_path.exists():
-                    continue
-
-                await self._process_file_with_retry(file_path, is_retry=False)
+                    await self._process_file_with_retry(file_path, is_retry=False)
 
     async def _retry_scanner_loop(self) -> None:
         """Periodically scan retry/ and reprocess a sample of files."""
@@ -197,7 +226,11 @@ class AsyncSink(ABC):
                     f"Sink '{self.name}' unexpected error on {current_file.name} "
                     f"(attempt {attempts}): {e}"
                 )
-                # For now we leave the file (no dead_letter move)
+                try:
+                    dead_letter_path = self.dead_letter_dir / current_file.name
+                    current_file.replace(dead_letter_path)
+                except Exception:
+                    current_file.unlink(missing_ok=True)
                 return
 
     @abstractmethod
