@@ -1,4 +1,3 @@
-import asyncio
 import gzip
 import json
 import logging
@@ -8,9 +7,9 @@ from typing import Any
 import aiofiles
 import aiohttp
 
-from ..models import DataPoint, TimeRes
-from .base import AsyncSink, TryAgainError
 from ..config import SinkConfig
+from ..models import DataPoint, TimeRes
+from .base import AsyncSink, BadFileError, TryAgainError
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +75,7 @@ class HttpPostSink(AsyncSink):
 
         sink_cfg = self.config  # this is already the inner dict from SinkConfig
 
-        self.url: str = sink_cfg["url"]                    # required
+        self.url: str = sink_cfg["url"]  # required
         self.params: dict[str, Any] = sink_cfg.get("params", {})
         self.username = sink_cfg.get("username")
         self.password = sink_cfg.get("password")
@@ -85,9 +84,9 @@ class HttpPostSink(AsyncSink):
         self.batch_size: int = sink_cfg.get("batch_size", 1000)
         self.timeout: int = sink_cfg.get("timeout", 30)
         self.extra_headers: dict = sink_cfg.get("headers", {})
-        
-        self.precision: str = sink_cfg.get('precision',TimeRes.S)
-        if not self.precision in TimeRes:
+
+        self.precision: str = sink_cfg.get("precision", TimeRes.S)
+        if self.precision not in TimeRes:
             self.precision = TimeRes.S
 
         self._session: aiohttp.ClientSession | None = None
@@ -102,12 +101,16 @@ class HttpPostSink(AsyncSink):
         """Create or reuse aiohttp session with basic auth if configured."""
         if self._session is None or self._session.closed:
             timeout = aiohttp.ClientTimeout(total=self.timeout)
-            auth = aiohttp.BasicAuth(self.username, self.password) if self.username and self.password else None
+            auth = (
+                aiohttp.BasicAuth(self.username, self.password)
+                if self.username and self.password
+                else None
+            )
 
             self._session = aiohttp.ClientSession(
                 auth=auth,
                 timeout=timeout,
-                headers={"User-Agent": f"daq-tools/{self.name}"}
+                headers={"User-Agent": f"daq-tools/{self.name}"},
             )
         return self._session
 
@@ -142,11 +145,33 @@ class HttpPostSink(AsyncSink):
             if batch:
                 await self._post_batch(session, batch)
 
-            logger.info(f"HttpPostSink '{self.name}' successfully posted {processed_count} points from {file_path.name}")
+            logger.info(
+                f"HttpPostSink '{self.name}' successfully posted {processed_count} points from {file_path.name}"
+            )
+
+        except TryAgainError as e:
+            logger.error(
+                f"HttpPostSink '{self.name}' temporarily failed processing {file_path.name}: {e}"
+            )
+            raise
+
+        except aiohttp.ClientConnectionError as e:
+            logger.error(
+                f"HttpPostSink '{self.name}' connection error (will retry): {e}"
+            )
+            raise TryAgainError(f"Processing error: {e}") from e
+
+        except BadFileError as e:
+            logger.error(
+                f"HttpPostSink '{self.name}' permanently failed processing {file_path.name}: {e}"
+            )
+            raise
 
         except Exception as e:
-            logger.error(f"HttpPostSink '{self.name}' failed processing {file_path.name}: {e}")
-            raise TryAgainError(f"Processing error: {e}") from e
+            logger.error(
+                f"HttpPostSink '{self.name}' unexpected error processing {file_path.name}: {e}"
+            )
+            raise BadFileError(f"Unexpected processing error: {e}") from e
 
     async def _post_batch(self, session: aiohttp.ClientSession, batch: list) -> None:
         """Send one batch via HTTP POST."""
@@ -156,12 +181,17 @@ class HttpPostSink(AsyncSink):
         # Prepare payload
         if self.format == "json":
             # Convert DataPoint objects to dicts
-            payload_list = [item if isinstance(item, dict) else item.__dict__ for item in batch]
+            payload_list = [
+                item if isinstance(item, dict) else item.__dict__ for item in batch
+            ]
             data = json.dumps(payload_list)
             content_type = "application/json"
         else:
             # Line protocol: join with newlines
-            batch = [point.to_line_protocol(time_resolution=self.precision) for point in batch]
+            batch = [
+                point.to_line_protocol(time_resolution=self.precision)
+                for point in batch
+            ]
             data = "\n".join(batch)
             content_type = "text/plain"
 
@@ -177,19 +207,23 @@ class HttpPostSink(AsyncSink):
             self.url,
             data=post_data,
             headers=headers,
-            params=self.params,          # aiohttp handles this cleanly
+            params=self.params,  # aiohttp handles this cleanly
         ) as resp:
             if resp.status >= 400:
                 text = await resp.text()
                 error_msg = f"HTTP {resp.status}: {text[:300]}"
-                
-                if 500 <= resp.status < 600 or resp.status in (429, 408, 503):
+
+                if 500 <= resp.status < 600 or resp.status in (429, 408):
                     raise TryAgainError(error_msg)
                 else:
-                    logger.error(f"HttpPostSink '{self.name}' permanent error: {error_msg}")
-                    raise Exception(error_msg)
+                    logger.error(
+                        f"HttpPostSink '{self.name}' permanent error: {error_msg}"
+                    )
+                    raise BadFileError(error_msg)
             else:
-                logger.debug(f"HttpPostSink '{self.name}' posted batch of {len(batch)} points successfully")
+                logger.debug(
+                    f"HttpPostSink '{self.name}' posted batch of {len(batch)} points successfully"
+                )
 
     async def stop(self) -> None:
         """Close HTTP session on shutdown."""

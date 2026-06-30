@@ -19,6 +19,12 @@ class TryAgainError(Exception):
     pass
 
 
+class BadFileError(Exception):
+    """Raise this from process_file() for bad files that should not be retried."""
+
+    pass
+
+
 class AsyncSink(ABC):
     """
     Base class for independent async data sinks.
