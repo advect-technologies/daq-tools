@@ -1,16 +1,17 @@
-import random
 import logging
+import random
 import string
 from pathlib import Path
-from typing import Any
 
-import aiomqtt
 import aiofiles
+import aiomqtt
 
+from ..config import SinkConfig
 from ..models import DataPoint
 from .base import AsyncSink, TryAgainError
 
 logger = logging.getLogger(__name__)
+
 
 class MqttSink(AsyncSink):
     """
@@ -36,25 +37,37 @@ class MqttSink(AsyncSink):
     }
     """
 
-    def __init__(self, config, base_data_dir):
-        super().__init__(config, base_data_dir)
+    def __init__(
+        self, config: SinkConfig, transient_data_dir: Path, long_term_data_dir: Path
+    ):
+        super().__init__(config, transient_data_dir, long_term_data_dir)
 
-        self.broker = self.config.get("broker", "localhost")
-        self.port = self.config.get("port", 1883)
-        self.username = self.config.get("username")
-        self.password = self.config.get("password")
-        self.qos = self.config.get("qos", 1)
+        self.broker = self.sink_config.get("broker", "localhost")
+        self.port = self.sink_config.get("port", 1883)
+        self.username = self.sink_config.get("username")
+        self.password = self.sink_config.get("password")
+        self.qos = self.sink_config.get("qos", 1)
 
-        random_suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
-        self.client_id = self.config.get("client_id", f"daq-ingestor-{self.name}-{random_suffix}")       
+        random_suffix = "".join(
+            random.choices(string.ascii_lowercase + string.digits, k=8)
+        )
+        self.client_id = self.sink_config.get(
+            "client_id", f"daq-ingestor-{self.name}-{random_suffix}"
+        )
 
-        tls = self.config.get('tls',False)
+        tls = self.sink_config.get("tls", False)
         self.tls_params = aiomqtt.TLSParameters() if tls else None
 
-        self.measurement_map: dict[str, str] = self.config.get("measurement_map", {})
-        self.fallback_topic: str = self.config.get("fallback_topic", "daq/fallback")
+        self.measurement_map: dict[str, str] = self.sink_config.get(
+            "measurement_map", {}
+        )
+        self.fallback_topic: str = self.sink_config.get(
+            "fallback_topic", "daq/fallback"
+        )
 
-        self.format = self.config.get("format", "json")  # "line_protocol" or "json"
+        self.format = self.sink_config.get(
+            "format", "json"
+        )  # "line_protocol" or "json"
 
         self._client: aiomqtt.Client | None = None
 
@@ -97,17 +110,18 @@ class MqttSink(AsyncSink):
 
                     # Publish — let any error bubble up to outer handler
                     await self._client.publish(
-                        topic=topic,
-                        payload=payload,
-                        qos=self.qos,
-                        retain=False
+                        topic=topic, payload=payload, qos=self.qos, retain=False
                     )
 
-            logger.debug(f"MqttSink '{self.name}' successfully published {file_path.name}")
+            logger.debug(
+                f"MqttSink '{self.name}' successfully published {file_path.name}"
+            )
 
         except aiomqtt.MqttError as e:
             # Connection lost, network issue, broker unreachable, etc.
-            logger.warning(f"MqttSink '{self.name}' MQTT error on {file_path.name}: {e}")
+            logger.warning(
+                f"MqttSink '{self.name}' MQTT error on {file_path.name}: {e}"
+            )
 
             # Critical: Force recreation of client on next retry
             if self._client is not None:
@@ -121,7 +135,9 @@ class MqttSink(AsyncSink):
 
         except Exception as e:
             # Unexpected non-MQTT errors (should be rare)
-            logger.warning(f"MqttSink '{self.name}' unexpected error on {file_path.name}: {e}")
+            logger.warning(
+                f"MqttSink '{self.name}' unexpected error on {file_path.name}: {e}"
+            )
             raise TryAgainError(str(e)) from e
 
     def _get_topic_for(self, measurement: str) -> str:

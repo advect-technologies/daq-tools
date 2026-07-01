@@ -46,6 +46,33 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
+## Directory Storage Strategy (Recommended for Production / Raspberry Pi)
+daq-tools supports separating hot-path (high-frequency) and durable storage to reduce SD card wear on embedded devices:
+
+```toml
+[inbound]
+watch_dir = "/dev/shm/daq/incoming"           # optional: can also be in RAM
+transient_dir = "/dev/shm/daq/transient"      # queue + per-sink inboxes (RAM recommended)
+long_term_dir = "/home/pi/daq/data"           # retry, dead_letter, line_jail, etc. (persistent disk)
+```
+
+### Recommended Setup
+
+* `transient_dir` on tmpfs (`/dev/shm` or a dedicated RAM mount) → minimal disk I/O for normal operation.
+* `long_term_dir` on persistent storage (SD card or USB) → only used when retries or bad files occur.
+* `watch_dir` can also be in RAM if your writer supports it.
+
+This gives you the best of both worlds: high performance with low wear, while keeping persistence where it matters.
+
+Example full config snippet:
+
+```toml
+[inbound]
+watch_dir = "/dev/shm/daq/incoming"
+transient_dir = "/dev/shm/daq/transient"
+long_term_dir = "/home/pi/daq/data"
+```
+
 
 ## Project Structure
 

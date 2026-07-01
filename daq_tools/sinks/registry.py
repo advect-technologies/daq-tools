@@ -2,11 +2,12 @@ import logging
 from pathlib import Path
 from typing import Type
 
-from ..config import SinkConfig, DAQConfig
+from ..config import SinkConfig
 from .base import AsyncSink
+from .dummy import DummySink
 from .file import FileSink
-from .mqtt import MqttSink
 from .http import HttpPostSink
+from .mqtt import MqttSink
 from .sqlite import SQLiteSink
 
 logger = logging.getLogger(__name__)
@@ -17,7 +18,9 @@ _SINK_REGISTRY: dict[str, Type[AsyncSink]] = {
     "mqtt": MqttSink,
     "http": HttpPostSink,
     "sqlite": SQLiteSink,
+    "dummy": DummySink,
 }
+
 
 def register_sink_type(sink_type: str, sink_class: Type[AsyncSink]) -> None:
     """Register a new sink type dynamically (useful for plugins/extensions)."""
@@ -27,10 +30,12 @@ def register_sink_type(sink_type: str, sink_class: Type[AsyncSink]) -> None:
     logger.info(f"Registered sink type: {sink_type}")
 
 
-def create_sink(sink_config: SinkConfig, base_data_dir: Path) -> AsyncSink:
+def create_sink(
+    sink_config: SinkConfig, transient_data_dir: Path, long_term_data_dir: Path
+) -> AsyncSink:
     """
     Factory function to instantiate the correct AsyncSink from config.
-    
+
     Raises ValueError if the sink type is unknown.
     """
     sink_type = sink_config.type.lower()
@@ -44,26 +49,36 @@ def create_sink(sink_config: SinkConfig, base_data_dir: Path) -> AsyncSink:
     sink_class = _SINK_REGISTRY[sink_type]
 
     try:
-        sink = sink_class(sink_config, base_data_dir)
+        sink = sink_class(
+            sink_config,
+            transient_data_dir=transient_data_dir,
+            long_term_data_dir=long_term_data_dir,
+        )
         logger.debug(f"Created {sink_type} sink: {sink_config.name}")
         return sink
     except Exception as e:
-        raise ValueError(f"Failed to create {sink_type} sink '{sink_config.name}': {e}") from e
+        raise ValueError(
+            f"Failed to create {sink_type} sink '{sink_config.name}': {e}"
+        ) from e
 
 
-async def create_all_sinks(config: "DAQConfig", base_data_dir: Path) -> list[AsyncSink]:
+async def create_all_sinks(
+    config: "list[SinkConfig]", transient_dir: Path, long_term_dir: Path
+) -> list[AsyncSink]:
     """
     Create all sinks defined in the config.
     Called by the DAQIngestor during startup.
     """
     sinks: list[AsyncSink] = []
 
-    for sink_cfg in config.sinks:
+    for sink_cfg in config:
         try:
-            sink = create_sink(sink_cfg, base_data_dir)
+            sink = create_sink(sink_cfg, transient_dir, long_term_dir)
             sinks.append(sink)
         except Exception as e:
-            logger.error(f"Failed to create sink '{sink_cfg.name}' (type: {sink_cfg.type}): {e}")
+            logger.error(
+                f"Failed to create sink '{sink_cfg.name}' (type: {sink_cfg.type}): {e}"
+            )
             # Continue creating other sinks — one bad sink shouldn't kill everything
             continue
 
