@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 import re
@@ -7,6 +6,7 @@ from pathlib import Path
 import aiofiles
 import aiosqlite
 
+from ..config import SinkConfig
 from ..models import DataPoint
 from .base import AsyncSink, TryAgainError
 
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 def _sanitize_table_name(name: str) -> str:
     """Convert measurement name to valid SQLite table name."""
-    name = re.sub(r'[^a-zA-Z0-9_]', '_', name)
+    name = re.sub(r"[^a-zA-Z0-9_]", "_", name)
     if name and name[0].isdigit():
         name = f"t_{name}"
     return name.lower()
@@ -24,7 +24,7 @@ def _sanitize_table_name(name: str) -> str:
 class SQLiteSink(AsyncSink):
     """
     SQLite sink - one table per measurement + Grafana-friendly view.
-    
+
     Config example:
     [[sinks]]
     name = "local_sqlite"
@@ -36,29 +36,31 @@ class SQLiteSink(AsyncSink):
     }
     """
 
-    def __init__(self, config: dict, base_data_dir: Path):
-        super().__init__(config, base_data_dir)
+    def __init__(
+        self, config: SinkConfig, transient_data_dir: Path, long_term_data_dir: Path
+    ):
+        super().__init__(config, transient_data_dir, long_term_data_dir)
 
-        sink_cfg = self.config
-
-        db_path = sink_cfg.get("db_path", "local.db")
+        db_path = self.sink_config.get("db_path", "local.db")
         self.db_path = Path(db_path)
 
-        self.batch_size: int = sink_cfg.get("batch_size", 2000)
-        self.journal_mode: str = sink_cfg.get("journal_mode", "WAL").upper()
+        self.batch_size: int = self.sink_config.get("batch_size", 2000)
+        self.journal_mode: str = self.sink_config.get("journal_mode", "WAL").upper()
 
         self._conn: aiosqlite.Connection | None = None
         self._known_tables: set[str] = set()
 
-        logger.info(f"SQLiteSink '{self.name}' initialized → {self.db_path} (journal_mode={self.journal_mode})")
+        logger.info(
+            f"SQLiteSink '{self.name}' initialized → {self.db_path} (journal_mode={self.journal_mode})"
+        )
 
     async def _ensure_db(self) -> aiosqlite.Connection:
         """Ensure database exists with good performance settings."""
         if self._conn is None:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
-            
+
             self._conn = await aiosqlite.connect(str(self.db_path))
-            
+
             await self._conn.execute(f"PRAGMA journal_mode = {self.journal_mode}")
             await self._conn.execute("PRAGMA synchronous = NORMAL")
             await self._conn.execute("PRAGMA cache_size = -64000")  # ~64MB
@@ -69,7 +71,7 @@ class SQLiteSink(AsyncSink):
     async def _ensure_table(self, measurement: str) -> str:
         """Ensure table + Grafana view exist for this measurement."""
         table_name = _sanitize_table_name(measurement)
-        
+
         if table_name in self._known_tables:
             return table_name
 
@@ -88,7 +90,7 @@ class SQLiteSink(AsyncSink):
         # Grafana-friendly view
         await conn.execute(f"""
             CREATE VIEW IF NOT EXISTS "v_{table_name}" AS
-            SELECT 
+            SELECT
                 datetime(time, 'unixepoch') AS timestamp,
                 time AS unix_time,
                 tags,
@@ -99,18 +101,22 @@ class SQLiteSink(AsyncSink):
         """)
 
         # Performance indexes
-        await conn.execute(f'CREATE INDEX IF NOT EXISTS "idx_{table_name}_time" ON "{table_name}"(time)')
-        
+        await conn.execute(
+            f'CREATE INDEX IF NOT EXISTS "idx_{table_name}_time" ON "{table_name}"(time)'
+        )
+
         await conn.commit()
         self._known_tables.add(table_name)
-        
-        logger.info(f"Ensured table + view for measurement '{measurement}' → {table_name}")
+
+        logger.info(
+            f"Ensured table + view for measurement '{measurement}' → {table_name}"
+        )
         return table_name
 
     async def process_file(self, file_path: Path) -> None:
         """Process JSONL file and insert into per-measurement tables."""
         conn = await self._ensure_db()
-        batch: dict[str, list[tuple]] = {}   # table_name → rows
+        batch: dict[str, list[tuple]] = {}  # table_name → rows
         processed = 0
 
         try:
@@ -128,11 +134,7 @@ class SQLiteSink(AsyncSink):
 
                     table_name = await self._ensure_table(dp.measurement)
 
-                    row = (
-                        dp.time,
-                        json.dumps(dp.tags),
-                        json.dumps(dp.fields)
-                    )
+                    row = (dp.time, json.dumps(dp.tags), json.dumps(dp.fields))
 
                     if table_name not in batch:
                         batch[table_name] = []
@@ -145,23 +147,30 @@ class SQLiteSink(AsyncSink):
             if batch:
                 await self._flush_batches(conn, batch)
 
-            logger.info(f"SQLiteSink '{self.name}' inserted {processed} points from {file_path.name}")
+            logger.info(
+                f"SQLiteSink '{self.name}' inserted {processed} points from {file_path.name}"
+            )
 
         except Exception as e:
             logger.error(f"SQLiteSink '{self.name}' error: {e}")
             raise TryAgainError(f"SQLite error: {e}") from e
 
-    async def _flush_batches(self, conn: aiosqlite.Connection, batch: dict[str, list[tuple]]) -> None:
+    async def _flush_batches(
+        self, conn: aiosqlite.Connection, batch: dict[str, list[tuple]]
+    ) -> None:
         """Insert all pending batches."""
         for table_name, rows in list(batch.items()):
             if not rows:
                 continue
-            async with conn.executemany(f"""
+            async with conn.executemany(
+                f"""
                 INSERT INTO "{table_name}" (time, tags, fields)
                 VALUES (?, ?, ?)
-            """, rows):
+            """,
+                rows,
+            ):
                 pass
-            batch[table_name] = []   # clear processed
+            batch[table_name] = []  # clear processed
 
         await conn.commit()
 

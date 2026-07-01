@@ -9,6 +9,7 @@ from watchfiles import Change
 from .config import DAQConfig, load_config
 from .sinks.base import AsyncSink
 from .sinks.registry import create_all_sinks
+from .utils import safe_move
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +33,15 @@ class DAQIngestor:
     def __init__(self, config: DAQConfig):
         self.config = config
 
-        self.base_data_dir = Path(config.inbound.data_dir).resolve()
+        self.transient_dir = Path(config.inbound.transient_dir).resolve()
+        self.long_term_dir = Path(config.inbound.long_term_dir).resolve()
+
         self.watch_dir = Path(config.inbound.watch_dir).resolve()
-        self.queue_dir = self.base_data_dir / "queue"
+        self.queue_dir = self.transient_dir / "queue"
+
+        logger.info(f"Using watch_dir: {self.watch_dir}")
+        logger.info(f"Using transient_dir (hot path): {self.transient_dir}")
+        logger.info(f"Using long_term_dir (durable): {self.long_term_dir}")
 
         self.file_pattern = config.inbound.file_pattern
 
@@ -55,7 +62,8 @@ class DAQIngestor:
     def _ensure_dirs(self) -> None:
         """Create all required directories."""
         self.queue_dir.mkdir(parents=True, exist_ok=True)
-        self.base_data_dir.mkdir(parents=True, exist_ok=True)
+        self.transient_dir.mkdir(parents=True, exist_ok=True)
+        self.long_term_dir.mkdir(parents=True, exist_ok=True)
 
         # Sink directories will be created by the sinks themselves
 
@@ -65,7 +73,9 @@ class DAQIngestor:
         self._running = True
 
         # Create and start all sinks
-        self.sinks = await create_all_sinks(self.config, self.base_data_dir)
+        self.sinks = await create_all_sinks(
+            self.config.sinks, self.transient_dir, self.long_term_dir
+        )
 
         for sink in self.sinks:
             await sink.start()
@@ -76,7 +86,9 @@ class DAQIngestor:
         self._stale_task = asyncio.create_task(self._stale_loop())
 
         logger.info(
-            f"DAQIngestor started. Watching {self.watch_dir} → queue → {len(self.sinks)} sinks"
+            f"DAQIngestor started. "
+            f"Watch: {self.watch_dir} → Transient queue: {self.queue_dir} "
+            f"→ {len(self.sinks)} sinks (long-term: {self.long_term_dir})"
         )
 
     async def stop(self) -> None:
@@ -113,10 +125,10 @@ class DAQIngestor:
             if not file_path.exists():
                 return
 
-            # Move new file to central queue (atomic on same filesystem)
+            # Move new file to central queue
             try:
                 queue_path = self.queue_dir / file_path.name
-                file_path.replace(queue_path)  # atomic move
+                safe_move(file_path, queue_path)
                 logger.info(f"New file queued: {file_path.name}")
             except Exception as e:
                 logger.error(f"Failed to move {file_path} to queue: {e}")

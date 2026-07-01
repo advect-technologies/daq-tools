@@ -12,17 +12,16 @@ import sys
 from pathlib import Path
 
 from daq_tools.core import DAQIngestor
-from daq_tools.config import load_config
 
 # Windows asyncio fix — must be very early
-if sys.platform == 'win32':
+if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 # Configure basic logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 
 logger = logging.getLogger(__name__)
@@ -38,11 +37,8 @@ async def main() -> None:
 
     try:
         ingestor = DAQIngestor.from_config_file(config_path)
-        logger.info(f"Loaded config from {config_path}")
-        logger.info(f"Watch directory: {ingestor.watch_dir}")
-        logger.info(f"Data directory:  {ingestor.base_data_dir}")
         logger.info(f"Number of sinks: {len(ingestor.config.sinks)}")
-        
+
         async with ingestor:
             logger.info("=" * 60)
             logger.info("DAQIngestor is now RUNNING")
@@ -56,7 +52,9 @@ async def main() -> None:
                     await asyncio.sleep(10)
                     # Optional: show status every 10 seconds
                     active_sinks = len([s for s in ingestor.sinks if s._running])
-                    logger.debug(f"Status: {active_sinks}/{len(ingestor.sinks)} sinks active")
+                    logger.debug(
+                        f"Status: {active_sinks}/{len(ingestor.sinks)} sinks active"
+                    )
             except asyncio.CancelledError:
                 pass
 

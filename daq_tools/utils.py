@@ -1,7 +1,12 @@
 import json
+import logging
+import shutil
 import urllib.request
 from math import isnan
+from pathlib import Path
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 # Module-level cache for device public IP tracking
 _DEVICE_PUBLIC_IP: Optional[str] = None
@@ -93,3 +98,28 @@ def check_for_empty_value(v: Any) -> bool:
         if not v.strip():
             return True
     return False
+
+
+def safe_move(src: Path, dst: Path) -> None:
+    """
+    Safely move a file, handling cross-filesystem cases gracefully.
+    Uses atomic rename when possible, falls back to copy+delete otherwise.
+    """
+    if not src.exists():
+        logger.warning(f"Source file {src} no longer exists during move")
+        return
+
+    try:
+        # Same filesystem → fast atomic move
+        if src.resolve().parent.stat().st_dev == dst.resolve().parent.stat().st_dev:
+            src.replace(dst)
+        else:
+            # Different filesystems (e.g. RAM → disk) → copy then delete
+            shutil.copy2(src, dst)
+            src.unlink()
+        logger.debug(f"Moved {src.name} → {dst}")
+    except Exception as e:
+        logger.error(f"Failed to move {src} to {dst}: {e}")
+        # Optional: try to clean up partial copy
+        dst.unlink(missing_ok=True)
+        raise

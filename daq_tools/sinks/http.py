@@ -70,22 +70,24 @@ class HttpPostSink(AsyncSink):
     }
     """
 
-    def __init__(self, config: SinkConfig, base_data_dir: Path):
-        super().__init__(config, base_data_dir)
+    def __init__(
+        self, config: SinkConfig, transient_data_dir: Path, long_term_data_dir: Path
+    ):
+        super().__init__(config, transient_data_dir, long_term_data_dir)
 
-        sink_cfg = self.config  # this is already the inner dict from SinkConfig
+        self.url: str = self.sink_config["url"]  # required
+        self.params: dict[str, Any] = self.sink_config.get("params", {})
+        self.username = self.sink_config.get("username")
+        self.password = self.sink_config.get("password")
+        self.compress: bool = self.sink_config.get("compress", False)
+        self.format: str = self.sink_config.get(
+            "format", "json"
+        )  # "json" or "line_protocol"
+        self.batch_size: int = self.sink_config.get("batch_size", 1000)
+        self.timeout: int = self.sink_config.get("timeout", 30)
+        self.extra_headers: dict = self.sink_config.get("headers", {})
 
-        self.url: str = sink_cfg["url"]  # required
-        self.params: dict[str, Any] = sink_cfg.get("params", {})
-        self.username = sink_cfg.get("username")
-        self.password = sink_cfg.get("password")
-        self.compress: bool = sink_cfg.get("compress", False)
-        self.format: str = sink_cfg.get("format", "json")  # "json" or "line_protocol"
-        self.batch_size: int = sink_cfg.get("batch_size", 1000)
-        self.timeout: int = sink_cfg.get("timeout", 30)
-        self.extra_headers: dict = sink_cfg.get("headers", {})
-
-        self.precision: str = sink_cfg.get("precision", TimeRes.S)
+        self.precision: str = self.sink_config.get("precision", TimeRes.S)
         if self.precision not in TimeRes:
             self.precision = TimeRes.S
 

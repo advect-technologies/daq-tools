@@ -9,6 +9,7 @@ import watchfiles
 from watchfiles import Change
 
 from ..config import SinkConfig
+from ..utils import safe_move
 
 logger = logging.getLogger(__name__)
 
@@ -37,20 +38,26 @@ class AsyncSink(ABC):
       line_jail/   - bad individual lines with timestamps
     """
 
-    def __init__(self, config: SinkConfig, base_data_dir: Path):
+    def __init__(
+        self, config: SinkConfig, transient_data_dir: Path, long_term_data_dir: Path
+    ):
         self.name = config.name
         self.sink_type = config.type
-        self.config = config.config
+        self.sink_config: dict = config.config
 
-        self.base_data_dir = Path(base_data_dir)
+        self.transient_data_dir = Path(transient_data_dir)
+        self.long_term_data_dir = Path(long_term_data_dir)
 
-        # Per-sink directories
-        self.sink_dir = self.base_data_dir / "sinks" / self.name
-        self.inbox_dir = self.sink_dir / "inbox"
-        self.retry_dir = self.sink_dir / "retry"
-        self.processed_dir = self.sink_dir / "processed"
-        self.dead_letter_dir = self.sink_dir / "dead_letter"
-        self.line_jail_dir = self.sink_dir / "line_jail"
+        # Transient sink directories
+        self.sink_dir_transient = self.transient_data_dir / "sinks" / self.name
+        self.inbox_dir = self.sink_dir_transient / "inbox"
+
+        # Long-term sink directories
+        self.sink_dir_long_term = self.long_term_data_dir / "sinks" / self.name
+        self.retry_dir = self.sink_dir_long_term / "retry"
+        self.processed_dir = self.sink_dir_long_term / "processed"
+        self.dead_letter_dir = self.sink_dir_long_term / "dead_letter"
+        self.line_jail_dir = self.sink_dir_long_term / "line_jail"
 
         self.max_retries = config.config.get("max_retries", 5)
         self.backoff_base = config.config.get("backoff_base_seconds", 2.0)
@@ -212,13 +219,9 @@ class AsyncSink(ABC):
                     # First failure: move from inbox to retry/
                     if not is_retry and attempts == 1:
                         retry_path = self.retry_dir / current_file.name
-                        try:
-                            current_file.replace(retry_path)
-                            current_file = retry_path
-                        except Exception as move_err:
-                            logger.error(
-                                f"Failed to move {current_file} to retry/: {move_err}"
-                            )
+                        safe_move(current_file, retry_path)
+                        current_file = retry_path
+
                 else:
                     logger.warning(
                         f"Sink '{self.name}' exhausted retries for {current_file.name} "
@@ -232,11 +235,8 @@ class AsyncSink(ABC):
                     f"Sink '{self.name}' unexpected error on {current_file.name} "
                     f"(attempt {attempts}): {e}"
                 )
-                try:
-                    dead_letter_path = self.dead_letter_dir / current_file.name
-                    current_file.replace(dead_letter_path)
-                except Exception:
-                    current_file.unlink(missing_ok=True)
+                dead_letter_path = self.dead_letter_dir / current_file.name
+                safe_move(current_file, dead_letter_path)
                 return
 
     @abstractmethod
