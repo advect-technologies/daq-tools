@@ -212,3 +212,4 @@ data
 output
 incoming-data
 storage-data
+setup_dirs.sh
