@@ -9,7 +9,7 @@ from .utils import configure_device_tracking, get_public_ip
 @dataclass
 class InboundConfig:
     watch_dir: str | Path
-    transient_dir: str | Path = "incoming-data"  # hot path (queue + sink inboxes)
+    transient_dir: str | Path = "transient-data"  # hot path (queue + sink inboxes)
     long_term_dir: str | Path = "storage-data"  # durable (retry, dead_letter...)
     file_pattern: str = "*.jsonl"
     stale_scan_interval: int = 600
